@@ -67,6 +67,34 @@ Using `Uri::root()` makes the block **environment-proof** — there is no `@id` 
 
 ---
 
+## Recipe: self-updating copyright year in a footer module
+
+The most common legitimate use of Sourcerer on a content site. A footer lives in a `mod_custom` module, which does **not** execute PHP — so a hard-coded year silently goes stale every 1 January.
+
+```html
+<p>&copy; 1996&ndash;{source}<?php echo date('Y'); ?>{/source} Example Ltd.</p>
+```
+
+Renders as `© 1996–2026`, and rolls over on its own.
+
+Notes:
+
+- Fits the mental model exactly — the PHP **echoes** its output, it is not a raw tag being "protected".
+- Works in `mod_custom` because the **System** Sourcerer plugin processes module content when its `other_enable` param is `1` (the default). You do **not** need to turn on the module's own *Prepare Content* option for this, and leaving it off avoids the Email-Cloaking mangling in gotcha #3.
+- `enable_php` must be `1` (see settings reference below).
+- For a range, hard-code the **founding** year and generate only the current one — `date('Y')` alone would wrongly imply the site launched this year.
+- Timezone: `date()` uses the server/Joomla timezone. Irrelevant for a year except in the last hours of 31 December. Use `Factory::getDate()->format('Y')` if that edge matters to you.
+- **Verify by rendering, not by reading the module.** Fetch the page and confirm no `{source}` tag survived into the HTML:
+  ```bash
+  curl -s https://example.org/ | grep -c '{source}'   # must be 0
+  curl -s https://example.org/ | grep -o '&copy;[^<]*'
+  ```
+  A non-zero `{source}` count means the plugin did not process that area — usually `enable_php = 0`, `enable_frontend = 0`, or `other_enable = 0`.
+
+Confirmed working on cybersalt.org (Joomla 6.1.2, Sourcerer via `pkg_sourcerer`) 2026-08-05 in a `position-3` footer module.
+
+---
+
 ## Plugin settings reference (System - Regular Labs - Sourcerer)
 
 - `enable_php`, `enable_frontend`, `enable_js`, `enable_css` — must be **1** for the respective code types / front-end processing. (PHP inside `{source}` only runs with `enable_php = 1`.)

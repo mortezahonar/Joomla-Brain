@@ -168,33 +168,116 @@ JSDoc indentation rule mirrors PHPDoc: align type, name, and description columns
 
 ## PHP_CodeSniffer
 
-Joomla publishes its own ruleset via the `joomla/coding-standards` Composer package.
+Joomla publishes rulesets via the `joomla/coding-standards` Composer package.
+
+> [!CAUTION]
+> **Do NOT use `--standard=Joomla` on a Joomla 5/6-native extension, and do NOT run
+> `phpcbf` with it. Its auto-fixer produces a fatal syntax error in modern code.**
+>
+> The `Joomla` ruleset shipped in `joomla/coding-standards` 3.x still encodes the
+> **Joomla 3** house style — hard tabs and Allman braces on control structures.
+> Joomla 5 and 6 core are **PSR-12**: four spaces, brace on the next line for classes
+> and methods, same line for control structures. Verified directly against the Joomla
+> 6.0.3 source.
+>
+> Worse, its `Joomla.Classes.InstantiateNewClasses` sniff mangles **anonymous classes**.
+> `phpcbf` rewrites:
+>
+> ```php
+> return new class () implements ServiceProviderInterface {
+> ```
+>
+> into:
+>
+> ```php
+> return new  implements ServiceProviderInterface {
+> ```
+>
+> — which is a parse error, not a style nit. The anonymous-class form is the standard
+> modern pattern for **every** J5/J6 `services/provider.php` and `script.php`, so
+> running the documented `phpcbf --standard=Joomla` step over a modern extension
+> silently corrupts two of its most important files.
+>
+> Discovered 2026-08-13 while setting up CI for `cs-smart-pagenav`; caught because
+> `php -l` ran after `phpcbf`. **Always lint after auto-fixing.**
 
 ### Install
 
 ```bash
-composer require --dev joomla/coding-standards
+composer require --dev joomla/coding-standards squizlabs/php_codesniffer dealerdirect/phpcodesniffer-composer-installer
 ```
+
+`dealerdirect/phpcodesniffer-composer-installer` is **required** — without it phpcs
+never registers the installed standards and every run dies with
+`ERROR: Referenced sniff "Joomla" does not exist.`
 
 ### Run
 
 ```bash
-./vendor/bin/phpcs --standard=Joomla admin/src site/src
+./vendor/bin/phpcs
 ```
 
 ### Project ruleset (`phpcs.xml` at extension root)
 
+Base on **PSR-12** for anything targeting Joomla 5/6, then layer Joomla's docblock
+conventions on top:
+
 ```xml
 <?xml version="1.0"?>
-<ruleset name="My Component">
-    <rule ref="Joomla"/>
-    <file>admin/src</file>
-    <file>site/src</file>
+<ruleset name="My Extension">
+    <file>src</file>
+    <arg name="tab-width" value="4"/>
+    <arg name="encoding" value="utf-8"/>
+
+    <!-- PSR-12, matching Joomla 5/6 core. NOT ref="Joomla" — see the caution above. -->
+    <rule ref="PSR12"/>
+
+    <!-- Joomla file headers are @package/@subpackage/@copyright/@license with no
+         prose summary, so this sniff fires on every correctly-formed file. -->
+    <rule ref="Generic.Commenting.DocComment.MissingShort">
+        <severity>0</severity>
+    </rule>
+
+    <rule ref="Squiz.Commenting.FunctionComment">
+        <!-- FormField::renderField($options = []) has no parameter type, and PHP
+             requires contravariance, so a child cannot narrow it to `array`. -->
+        <exclude name="Squiz.Commenting.FunctionComment.TypeHintMissing"/>
+    </rule>
+
+    <!-- Every Joomla file starts with a `\defined('_JEXEC') or die;` side effect. -->
+    <rule ref="PSR1.Files.SideEffects">
+        <exclude-pattern>*/tmpl/*</exclude-pattern>
+    </rule>
+
     <exclude-pattern>*/vendor/*</exclude-pattern>
     <exclude-pattern>*/node_modules/*</exclude-pattern>
     <exclude-pattern>*/media/*</exclude-pattern>
 </ruleset>
 ```
+
+In source files, wrap the `_JEXEC` guard the way core does so the sniff stays on
+everywhere else:
+
+```php
+// phpcs:disable PSR1.Files.SideEffects
+\defined('_JEXEC') or die;
+// phpcs:enable PSR1.Files.SideEffects
+```
+
+### `.gitattributes` is not optional
+
+The `Generic.Files.LineEndings` sniff fails on **every file** when a repo is checked
+out on Windows with default autocrlf. Add:
+
+```gitattributes
+* text=auto eol=lf
+*.ps1 text eol=crlf
+```
+
+`eol=lf` forces LF in the *working tree*, not just the repo, so local phpcs sees the
+same bytes CI does.
+
+Reference implementation of all of the above: [cs-smart-pagenav](https://github.com/cybersalt/cs-smart-pagenav) — `phpcs.xml`, `.gitattributes`, `.github/workflows/ci.yml`.
 
 For Cybersalt extensions, also exclude the build artefacts directory and the temporary 7-Zip staging folder if they exist at the repo root:
 
